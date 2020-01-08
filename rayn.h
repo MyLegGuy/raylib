@@ -74,6 +74,10 @@
 #ifndef RAYLIB_H
 #define RAYLIB_H
 
+#define NATHANRAYLIBFORK
+extern char* rayCurrentKeyState;
+extern char* rayPrevKeyState;
+
 #include <stdarg.h>                             // Required for: va_list - Only used by TraceLogCallback
 
 #if defined(_WIN32) && defined(BUILD_LIBTYPE_SHARED)
@@ -1092,7 +1096,6 @@ RLAPI Image LoadImageEx(Color *pixels, int width, int height);                  
 RLAPI Image LoadImagePro(void *data, int width, int height, int format);                                 // Load image from raw data with parameters
 RLAPI Image LoadImageRaw(const char *fileName, int width, int height, int format, int headerSize);       // Load image from RAW file data
 RLAPI void ExportImage(Image image, const char *fileName);                                               // Export image data to file
-RLAPI void ExportImageAsCode(Image image, const char *fileName);                                         // Export image as code file defining an array of bytes
 RLAPI Texture2D LoadTexture(const char *fileName);                                                       // Load texture from file into GPU memory (VRAM)
 RLAPI Texture2D LoadTextureFromImage(Image image);                                                       // Load texture from image data
 RLAPI TextureCubemap LoadTextureCubemap(Image image, int layoutType);                                    // Load cubemap from image, multiple image cubemap layouts supported

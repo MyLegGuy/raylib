@@ -64,20 +64,10 @@
 *   #define SUPPORT_EVENTS_WAITING
 *       Wait for events passively (sleeping while no events) instead of polling them actively every frame
 *
-*   #define SUPPORT_SCREEN_CAPTURE
-*       Allow automatic screen capture of current screen pressing F12, defined in KeyCallback()
-*
-*   #define SUPPORT_GIF_RECORDING
-*       Allow automatic gif recording of current screen pressing CTRL+F12, defined in KeyCallback()
-*
 *   #define SUPPORT_HIGH_DPI
 *       Allow scale all the drawn content to match the high-DPI equivalent size (only PLATFORM_DESKTOP)
 *       NOTE: This flag is forced on macOS, since most displays are high-DPI
 *
-*   #define SUPPORT_COMPRESSION_API
-*       Support CompressData() and DecompressData() functions, those functions use zlib implementation
-*       provided by stb_image and stb_image_write libraries, so, those libraries must be enabled on textures module
-*       for linkage
 *
 *   DEPENDENCIES:
 *       rglfw    - Manage graphic device, OpenGL context and inputs on PLATFORM_DESKTOP (Windows, Linux, OSX. FreeBSD, OpenBSD, NetBSD, DragonFly)
@@ -107,7 +97,7 @@
 *
 **********************************************************************************************/
 
-#include "raylib.h"             // Declares module functions
+#include "rayn.h"             // Declares module functions
 
 // Check if config flags have been externally provided on compilation line
 #if !defined(EXTERNAL_CONFIG_FLAGS)
@@ -137,11 +127,6 @@
 #if defined(SUPPORT_CAMERA_SYSTEM)
     #define CAMERA_IMPLEMENTATION
     #include "camera.h"         // Camera system functionality
-#endif
-
-#if defined(SUPPORT_GIF_RECORDING)
-    #define RGIF_IMPLEMENTATION
-    #include "external/rgif.h"  // Support GIF recording
 #endif
 
 #if defined(__APPLE__)
@@ -257,12 +242,6 @@
     #include <emscripten/html5.h>       // Emscripten HTML5 library
 #endif
 
-#if defined(SUPPORT_COMPRESSION_API)
-    // NOTE: Those declarations require stb_image and stb_image_write definitions, included in textures module
-    unsigned char *stbi_zlib_compress(unsigned char *data, int data_len, int *out_len, int quality);
-    char *stbi_zlib_decode_malloc(char const *buffer, int len, int *outlen);
-#endif
-
 //----------------------------------------------------------------------------------
 // Defines and Macros
 //----------------------------------------------------------------------------------
@@ -353,7 +332,8 @@ static bool contextRebindRequired = false;      // Used to know context rebind r
 // Keyboard states
 static char previousKeyState[512] = { 0 };      // Registers previous frame key state
 static char currentKeyState[512] = { 0 };       // Registers current frame key state
-static int exitKey = KEY_ESCAPE;                // Default exit key (ESC)
+char* rayCurrentKeyState=currentKeyState;
+char* rayPrevKeyState=previousKeyState;
 
 static unsigned int keyPressedQueue[MAX_CHARS_QUEUE] = { 0 }; // Input characters queue
 static int keyPressedQueueCount = 0;             // Input characters queue count
@@ -449,14 +429,6 @@ static int dropFilesCount = 0;              // Count dropped files strings
 static char **dirFilesPath;                 // Store directory files paths as strings
 static int dirFilesCount = 0;               // Count directory files strings
 
-#if defined(SUPPORT_SCREEN_CAPTURE)
-static int screenshotCounter = 0;           // Screenshots counter
-#endif
-
-#if defined(SUPPORT_GIF_RECORDING)
-static int gifFramesCounter = 0;            // GIF frames counter
-static bool gifRecording = false;           // GIF recording state
-#endif
 //-----------------------------------------------------------------------------------
 
 //----------------------------------------------------------------------------------
@@ -719,13 +691,6 @@ void InitWindow(int width, int height, const char *title)
 // Close window and unload OpenGL context
 void CloseWindow(void)
 {
-#if defined(SUPPORT_GIF_RECORDING)
-    if (gifRecording)
-    {
-        GifEnd();
-        gifRecording = false;
-    }
-#endif
 
 #if defined(SUPPORT_DEFAULT_FONT)
     UnloadFontDefault();
@@ -1236,35 +1201,6 @@ void EndDrawing(void)
 
     rlglDraw();                     // Draw Buffers (Only OpenGL 3+ and ES2)
 
-#if defined(SUPPORT_GIF_RECORDING)
-
-    #define GIF_RECORD_FRAMERATE    10
-
-    if (gifRecording)
-    {
-        gifFramesCounter++;
-
-        // NOTE: We record one gif frame every 10 game frames
-        if ((gifFramesCounter%GIF_RECORD_FRAMERATE) == 0)
-        {
-            // Get image data for the current frame (from backbuffer)
-            // NOTE: This process is very slow... :(
-            unsigned char *screenData = rlReadScreenPixels(screenWidth, screenHeight);
-            GifWriteFrame(screenData, screenWidth, screenHeight, 10, 8, false);
-
-            RL_FREE(screenData);   // Free image data
-        }
-
-        if (((gifFramesCounter/15)%2) == 1)
-        {
-            DrawCircle(30, screenHeight - 20, 10, RED);
-            DrawText("RECORDING", 50, screenHeight - 25, 10, MAROON);
-        }
-
-        rlglDraw();                 // Draw RECORDING message
-    }
-#endif
-
     SwapBuffers();                  // Copy back buffer to front buffer
     PollInputEvents();              // Poll user events
     
@@ -1274,22 +1210,6 @@ void EndDrawing(void)
     previousTime = currentTime;
 
     frameTime = updateTime + drawTime;
-    
-    // Wait for some milliseconds...
-    if (frameTime < targetTime)
-    {
-        Wait((float)(targetTime - frameTime)*1000.0f);
-
-        currentTime = GetTime();
-        double waitTime = currentTime - previousTime;
-        previousTime = currentTime;
-
-        frameTime += waitTime;      // Total frame time: update + draw + wait
-        
-        //SetWindowTitle(FormatText("Update: %f, Draw: %f, Req.Wait: %f, Real.Wait: %f, Total: %f, Target: %f\n", 
-        //               (float)updateTime, (float)drawTime, (float)(targetTime - (updateTime + drawTime)), 
-        //               (float)waitTime, (float)frameTime, (float)targetTime));
-    }
 }
 
 // Initialize 2D mode with custom camera (2D)
@@ -1580,21 +1500,6 @@ Vector2 GetScreenToWorld2D(Vector2 position, Camera2D camera)
     return (Vector2){ transform.x, transform.y };
 }
 
-// Set target FPS (maximum)
-void SetTargetFPS(int fps)
-{
-    if (fps < 1) targetTime = 0.0;
-    else targetTime = 1.0/(double)fps;
-
-    TraceLog(LOG_INFO, "Target time per frame: %02.03f milliseconds", (float)targetTime*1000);
-}
-
-// Returns current FPS
-int GetFPS(void)
-{
-    return (int)roundf(1.0f/GetFrameTime());
-}
-
 // Returns time in seconds for last frame drawn
 float GetFrameTime(void)
 {
@@ -1622,12 +1527,6 @@ double GetTime(void)
     // Updated through messages
     return currentTime;
 #endif
-}
-
-// Returns hexadecimal value for a Color
-int ColorToInt(Color color)
-{
-    return (((int)color.r << 24) | ((int)color.g << 16) | ((int)color.b << 8) | (int)color.a);
 }
 
 // Returns color normalized as float [0..1]
@@ -2074,32 +1973,6 @@ long GetFileModTime(const char *fileName)
     return 0;
 }
 
-// Compress data (DEFLATE algorythm)
-unsigned char *CompressData(unsigned char *data, int dataLength, int *compDataLength)
-{
-    #define COMPRESSION_QUALITY_DEFLATE  8
-
-    unsigned char *compData = NULL;
-
-#if defined(SUPPORT_COMPRESSION_API)
-    compData = stbi_zlib_compress(data, dataLength, compDataLength, COMPRESSION_QUALITY_DEFLATE);
-#endif
-
-    return compData;
-}
-
-// Decompress data (DEFLATE algorythm)
-unsigned char *DecompressData(unsigned char *compData, int compDataLength, int *dataLength)
-{
-    char *data = NULL;
-
-#if defined(SUPPORT_COMPRESSION_API)
-    data = stbi_zlib_decode_malloc((char *)compData, compDataLength, dataLength);
-#endif
-
-    return (unsigned char *)data;
-}
-
 // Save integer value to storage file (to defined position)
 // NOTE: Storage positions is directly related to file memory layout (4 bytes each integer)
 void StorageSaveValue(int position, int value)
@@ -2266,15 +2139,6 @@ int GetKeyPressed(void)
     }
 
     return value;
-}
-
-// Set a custom key to exit program
-// NOTE: default exitKey is ESCAPE
-void SetExitKey(int key)
-{
-#if !defined(PLATFORM_ANDROID)
-    exitKey = key;
-#endif
 }
 
 // NOTE: Gamepad support not implemented in emscripten GLFW3 (PLATFORM_WEB)
@@ -3859,63 +3723,8 @@ static void ScrollCallback(GLFWwindow *window, double xoffset, double yoffset)
 }
 
 // GLFW3 Keyboard Callback, runs on key pressed
-static void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
-{
-    if (key == exitKey && action == GLFW_PRESS)
-    {
-        glfwSetWindowShouldClose(window, GLFW_TRUE);
-
-        // NOTE: Before closing window, while loop must be left!
-    }
-    else if (key == GLFW_KEY_F12 && action == GLFW_PRESS)
-    {
-#if defined(SUPPORT_GIF_RECORDING)
-        if (mods == GLFW_MOD_CONTROL)
-        {
-            if (gifRecording)
-            {
-                GifEnd();
-                gifRecording = false;
-
-            #if defined(PLATFORM_WEB)
-                // Download file from MEMFS (emscripten memory filesystem)
-                // saveFileFromMEMFSToDisk() function is defined in raylib/templates/web_shel/shell.html
-                emscripten_run_script(TextFormat("saveFileFromMEMFSToDisk('%s','%s')", TextFormat("screenrec%03i.gif", screenshotCounter - 1), TextFormat("screenrec%03i.gif", screenshotCounter - 1)));
-            #endif
-
-                TraceLog(LOG_INFO, "End animated GIF recording");
-            }
-            else
-            {
-                gifRecording = true;
-                gifFramesCounter = 0;
-
-                char path[512] = { 0 };
-            #if defined(PLATFORM_ANDROID)
-                strcpy(path, internalDataPath);
-                strcat(path, TextFormat("./screenrec%03i.gif", screenshotCounter));
-            #else
-                strcpy(path, TextFormat("./screenrec%03i.gif", screenshotCounter));
-            #endif
-
-                // NOTE: delay represents the time between frames in the gif, if we capture a gif frame every
-                // 10 game frames and each frame trakes 16.6ms (60fps), delay between gif frames should be ~16.6*10.
-                GifBegin(path, screenWidth, screenHeight, (int)(GetFrameTime()*10.0f), 8, false);
-                screenshotCounter++;
-
-                TraceLog(LOG_INFO, "Begin animated GIF recording: %s", TextFormat("screenrec%03i.gif", screenshotCounter));
-            }
-        }
-        else
-#endif  // SUPPORT_GIF_RECORDING
-#if defined(SUPPORT_SCREEN_CAPTURE)
-        {
-            TakeScreenshot(TextFormat("screenshot%03i.png", screenshotCounter));
-            screenshotCounter++;
-        }
-#endif  // SUPPORT_SCREEN_CAPTURE
-    }
-    else currentKeyState[key] = action;
+static void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mods){
+	currentKeyState[key] = action;
 }
 
 // GLFW3 Mouse Button Callback, runs on mouse button pressed
@@ -4611,17 +4420,6 @@ static void ProcessKeyboard(void)
         }
     }
 
-    // Check exit key (same functionality as GLFW3 KeyCallback())
-    if (currentKeyState[exitKey] == 1) windowShouldClose = true;
-
-#if defined(SUPPORT_SCREEN_CAPTURE)
-    // Check screen capture key (raylib key: KEY_F12)
-    if (currentKeyState[301] == 1)
-    {
-        TakeScreenshot(FormatText("screenshot%03i.png", screenshotCounter));
-        screenshotCounter++;
-    }
-#endif
 }
 
 // Restore default keyboard input
@@ -5025,17 +4823,6 @@ static void *EventThread(void *arg)
                             keyPressedQueue[keyPressedQueueCount] = keycode;     // Register last key pressed
                             keyPressedQueueCount++;
                         }
-
-                        #if defined(SUPPORT_SCREEN_CAPTURE)
-                            // Check screen capture key (raylib key: KEY_F12)
-                            if (currentKeyState[301] == 1)
-                            {
-                                TakeScreenshot(FormatText("screenshot%03i.png", screenshotCounter));
-                                screenshotCounter++;
-                            }
-                        #endif
-
-                        if (currentKeyState[exitKey] == 1) windowShouldClose = true;
 
                         TraceLog(LOG_DEBUG, "KEY%s ScanCode: %4i KeyCode: %4i",event.value == 0 ? "UP":"DOWN", event.code, keycode);
                     }

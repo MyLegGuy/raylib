@@ -29,9 +29,6 @@
 *   #define RLGL_STANDALONE
 *       Use rlgl as standalone library (no raylib dependency)
 *
-*   #define SUPPORT_VR_SIMULATOR
-*       Support VR simulation functionality (stereo rendering)
-*
 *   DEPENDENCIES:
 *       raymath     - 3D math functionality (Vector3, Matrix, Quaternion)
 *       GLAD        - OpenGL extensions loading (OpenGL 3.3 Core only)
@@ -752,17 +749,6 @@ typedef struct DrawCall {
     //Matrix modelview;         // Modelview matrix for this draw
 } DrawCall;
 
-#if defined(SUPPORT_VR_SIMULATOR)
-// VR Stereo rendering configuration for simulator
-typedef struct VrStereoConfig {
-    Shader distortionShader;        // VR stereo rendering distortion shader
-    Matrix eyesProjection[2];       // VR stereo rendering eyes projection matrices
-    Matrix eyesViewOffset[2];       // VR stereo rendering eyes view offset matrices
-    int eyeViewportRight[4];        // VR stereo rendering right eye viewport [x, y, w, h]
-    int eyeViewportLeft[4];         // VR stereo rendering left eye viewport [x, y, w, h]
-} VrStereoConfig;
-#endif
-
 //----------------------------------------------------------------------------------
 // Global Variables Definition
 //----------------------------------------------------------------------------------
@@ -832,15 +818,6 @@ static PFNGLDELETEVERTEXARRAYSOESPROC glDeleteVertexArrays;
 //static PFNGLISVERTEXARRAYOESPROC glIsVertexArray;   // NOTE: Fails in WebGL, omitted
 #endif
 
-#if defined(SUPPORT_VR_SIMULATOR)
-// VR global variables
-static VrStereoConfig vrConfig = { 0 };     // VR stereo configuration for simulator
-static RenderTexture2D stereoFbo = { 0 };   // VR stereo rendering framebuffer
-static bool vrSimulatorReady = false;       // VR simulator ready flag
-static bool vrStereoRender = false;         // VR stereo rendering enabled/disabled flag
-                                            // NOTE: This flag is useful to render data over stereo image (i.e. FPS)
-#endif  // SUPPORT_VR_SIMULATOR
-
 #endif  // GRAPHICS_API_OPENGL_33 || GRAPHICS_API_OPENGL_ES2
 
 static int blendMode = 0;                   // Track current blending mode
@@ -867,10 +844,6 @@ static void UnloadBuffersDefault(void);     // Unload default internal buffers v
 
 static void GenDrawCube(void);              // Generate and draw cube
 static void GenDrawQuad(void);              // Generate and draw quad
-
-#if defined(SUPPORT_VR_SIMULATOR)
-static void SetStereoView(int eye, Matrix matProjection, Matrix matModelView);  // Set internal projection and modelview matrix depending on eye
-#endif
 
 #endif  // GRAPHICS_API_OPENGL_33 || GRAPHICS_API_OPENGL_ES2
 
@@ -2748,16 +2721,10 @@ void rlDrawMesh(Mesh mesh, Material material, Matrix transform)
     }
 
     int eyesCount = 1;
-#if defined(SUPPORT_VR_SIMULATOR)
-    if (vrStereoRender) eyesCount = 2;
-#endif
 
     for (int eye = 0; eye < eyesCount; eye++)
     {
         if (eyesCount == 1) modelview = matModelView;
-        #if defined(SUPPORT_VR_SIMULATOR)
-        else SetStereoView(eye, matProjection, matModelView);
-        #endif
 
         // Calculate model-view-projection matrix (MVP)
         Matrix matMVP = MatrixMultiply(modelview, projection);        // Transform to screen-space coordinates
@@ -3565,239 +3532,6 @@ void EndBlendMode(void)
     BeginBlendMode(BLEND_ALPHA);
 }
 
-#if defined(SUPPORT_VR_SIMULATOR)
-// Init VR simulator for selected device parameters
-// NOTE: It modifies the global variable: stereoFbo
-void InitVrSimulator(void)
-{
-#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    // Initialize framebuffer and textures for stereo rendering
-    // NOTE: Screen size should match HMD aspect ratio
-    stereoFbo = rlLoadRenderTexture(framebufferWidth, framebufferHeight, UNCOMPRESSED_R8G8B8A8, 24, false);
-
-    vrSimulatorReady = true;
-#else
-    TraceLog(LOG_WARNING, "VR Simulator not supported on OpenGL 1.1");
-#endif
-}
-
-// Update VR tracking (position and orientation) and camera
-// NOTE: Camera (position, target, up) gets update with head tracking information
-void UpdateVrTracking(Camera *camera)
-{
-    // TODO: Simulate 1st person camera system
-}
-
-// Close VR simulator for current device
-void CloseVrSimulator(void)
-{
-#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    if (vrSimulatorReady) rlDeleteRenderTextures(stereoFbo);        // Unload stereo framebuffer and texture
-#endif
-}
-
-// Set stereo rendering configuration parameters
-void SetVrConfiguration(VrDeviceInfo hmd, Shader distortion)
-{
-#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    // Reset vrConfig for a new values assignment
-    memset(&vrConfig, 0, sizeof(vrConfig));
-
-    // Assign distortion shader
-    vrConfig.distortionShader = distortion;
-
-    // Compute aspect ratio
-    float aspect = ((float)hmd.hResolution*0.5f)/(float)hmd.vResolution;
-
-    // Compute lens parameters
-    float lensShift = (hmd.hScreenSize*0.25f - hmd.lensSeparationDistance*0.5f)/hmd.hScreenSize;
-    float leftLensCenter[2] = { 0.25f + lensShift, 0.5f };
-    float rightLensCenter[2] = { 0.75f - lensShift, 0.5f };
-    float leftScreenCenter[2] = { 0.25f, 0.5f };
-    float rightScreenCenter[2] = { 0.75f, 0.5f };
-
-    // Compute distortion scale parameters
-    // NOTE: To get lens max radius, lensShift must be normalized to [-1..1]
-    float lensRadius = (float)fabs(-1.0f - 4.0f*lensShift);
-    float lensRadiusSq = lensRadius*lensRadius;
-    float distortionScale = hmd.lensDistortionValues[0] +
-                            hmd.lensDistortionValues[1]*lensRadiusSq +
-                            hmd.lensDistortionValues[2]*lensRadiusSq*lensRadiusSq +
-                            hmd.lensDistortionValues[3]*lensRadiusSq*lensRadiusSq*lensRadiusSq;
-
-    TraceLog(LOG_DEBUG, "VR: Distortion Scale: %f", distortionScale);
-
-    float normScreenWidth = 0.5f;
-    float normScreenHeight = 1.0f;
-    float scaleIn[2] = { 2.0f/normScreenWidth, 2.0f/normScreenHeight/aspect };
-    float scale[2] = { normScreenWidth*0.5f/distortionScale, normScreenHeight*0.5f*aspect/distortionScale };
-
-    TraceLog(LOG_DEBUG, "VR: Distortion Shader: LeftLensCenter = { %f, %f }", leftLensCenter[0], leftLensCenter[1]);
-    TraceLog(LOG_DEBUG, "VR: Distortion Shader: RightLensCenter = { %f, %f }", rightLensCenter[0], rightLensCenter[1]);
-    TraceLog(LOG_DEBUG, "VR: Distortion Shader: Scale = { %f, %f }", scale[0], scale[1]);
-    TraceLog(LOG_DEBUG, "VR: Distortion Shader: ScaleIn = { %f, %f }", scaleIn[0], scaleIn[1]);
-
-    // Fovy is normally computed with: 2*atan2(hmd.vScreenSize, 2*hmd.eyeToScreenDistance)
-    // ...but with lens distortion it is increased (see Oculus SDK Documentation)
-    //float fovy = 2.0f*atan2(hmd.vScreenSize*0.5f*distortionScale, hmd.eyeToScreenDistance);     // Really need distortionScale?
-    float fovy = 2.0f*(float)atan2(hmd.vScreenSize*0.5f, hmd.eyeToScreenDistance);
-
-    // Compute camera projection matrices
-    float projOffset = 4.0f*lensShift;      // Scaled to projection space coordinates [-1..1]
-    Matrix proj = MatrixPerspective(fovy, aspect, 0.01, 1000.0);
-    vrConfig.eyesProjection[0] = MatrixMultiply(proj, MatrixTranslate(projOffset, 0.0f, 0.0f));
-    vrConfig.eyesProjection[1] = MatrixMultiply(proj, MatrixTranslate(-projOffset, 0.0f, 0.0f));
-
-    // Compute camera transformation matrices
-    // NOTE: Camera movement might seem more natural if we model the head.
-    // Our axis of rotation is the base of our head, so we might want to add
-    // some y (base of head to eye level) and -z (center of head to eye protrusion) to the camera positions.
-    vrConfig.eyesViewOffset[0] = MatrixTranslate(-hmd.interpupillaryDistance*0.5f, 0.075f, 0.045f);
-    vrConfig.eyesViewOffset[1] = MatrixTranslate(hmd.interpupillaryDistance*0.5f, 0.075f, 0.045f);
-
-    // Compute eyes Viewports
-    vrConfig.eyeViewportRight[2] = hmd.hResolution/2;
-    vrConfig.eyeViewportRight[3] = hmd.vResolution;
-
-    vrConfig.eyeViewportLeft[0] = hmd.hResolution/2;
-    vrConfig.eyeViewportLeft[1] = 0;
-    vrConfig.eyeViewportLeft[2] = hmd.hResolution/2;
-    vrConfig.eyeViewportLeft[3] = hmd.vResolution;
-
-    if (vrConfig.distortionShader.id > 0)
-    {
-        // Update distortion shader with lens and distortion-scale parameters
-        SetShaderValue(vrConfig.distortionShader, GetShaderLocation(vrConfig.distortionShader, "leftLensCenter"), leftLensCenter, UNIFORM_VEC2);
-        SetShaderValue(vrConfig.distortionShader, GetShaderLocation(vrConfig.distortionShader, "rightLensCenter"), rightLensCenter, UNIFORM_VEC2);
-        SetShaderValue(vrConfig.distortionShader, GetShaderLocation(vrConfig.distortionShader, "leftScreenCenter"), leftScreenCenter, UNIFORM_VEC2);
-        SetShaderValue(vrConfig.distortionShader, GetShaderLocation(vrConfig.distortionShader, "rightScreenCenter"), rightScreenCenter, UNIFORM_VEC2);
-
-        SetShaderValue(vrConfig.distortionShader, GetShaderLocation(vrConfig.distortionShader, "scale"), scale, UNIFORM_VEC2);
-        SetShaderValue(vrConfig.distortionShader, GetShaderLocation(vrConfig.distortionShader, "scaleIn"), scaleIn, UNIFORM_VEC2);
-        SetShaderValue(vrConfig.distortionShader, GetShaderLocation(vrConfig.distortionShader, "hmdWarpParam"), hmd.lensDistortionValues, UNIFORM_VEC4);
-        SetShaderValue(vrConfig.distortionShader, GetShaderLocation(vrConfig.distortionShader, "chromaAbParam"), hmd.chromaAbCorrection, UNIFORM_VEC4);
-    }
-#endif
-}
-
-// Detect if VR simulator is running
-bool IsVrSimulatorReady(void)
-{
-#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    return vrSimulatorReady;
-#else
-    return false;
-#endif
-}
-
-// Enable/Disable VR experience (device or simulator)
-void ToggleVrMode(void)
-{
-#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    vrSimulatorReady = !vrSimulatorReady;
-
-    if (!vrSimulatorReady)
-    {
-        vrStereoRender = false;
-
-        // Reset viewport and default projection-modelview matrices
-        rlViewport(0, 0, framebufferWidth, framebufferHeight);
-        projection = MatrixOrtho(0.0, framebufferWidth, framebufferHeight, 0.0, 0.0, 1.0);
-        modelview = MatrixIdentity();
-    }
-    else vrStereoRender = true;
-#endif
-}
-
-// Begin VR drawing configuration
-void BeginVrDrawing(void)
-{
-#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    if (vrSimulatorReady)
-    {
-
-        rlEnableRenderTexture(stereoFbo.id);    // Setup framebuffer for stereo rendering
-        //glEnable(GL_FRAMEBUFFER_SRGB);        // Enable SRGB framebuffer (only if required)
-
-        //glViewport(0, 0, buffer.width, buffer.height);    // Useful if rendering to separate framebuffers (every eye)
-        rlClearScreenBuffers();                 // Clear current framebuffer
-
-        vrStereoRender = true;
-    }
-#endif
-}
-
-// End VR drawing process (and desktop mirror)
-void EndVrDrawing(void)
-{
-#if defined(GRAPHICS_API_OPENGL_33) || defined(GRAPHICS_API_OPENGL_ES2)
-    if (vrSimulatorReady)
-    {
-        vrStereoRender = false;         // Disable stereo render
-
-        rlDisableRenderTexture();       // Unbind current framebuffer
-
-        rlClearScreenBuffers();         // Clear current framebuffer
-
-        // Set viewport to default framebuffer size (screen size)
-        rlViewport(0, 0, framebufferWidth, framebufferHeight);
-
-        // Let rlgl reconfigure internal matrices
-        rlMatrixMode(RL_PROJECTION);                            // Enable internal projection matrix
-        rlLoadIdentity();                                       // Reset internal projection matrix
-        rlOrtho(0.0, framebufferWidth, framebufferHeight, 0.0, 0.0, 1.0); // Recalculate internal projection matrix
-        rlMatrixMode(RL_MODELVIEW);                             // Enable internal modelview matrix
-        rlLoadIdentity();                                       // Reset internal modelview matrix
-
-        // Draw RenderTexture (stereoFbo) using distortion shader if available
-        if (vrConfig.distortionShader.id > 0) currentShader = vrConfig.distortionShader;
-        else currentShader = GetShaderDefault();
-
-        rlEnableTexture(stereoFbo.texture.id);
-
-        rlPushMatrix();
-            rlBegin(RL_QUADS);
-                rlColor4ub(255, 255, 255, 255);
-                rlNormal3f(0.0f, 0.0f, 1.0f);
-
-                // Bottom-left corner for texture and quad
-                rlTexCoord2f(0.0f, 1.0f);
-                rlVertex2f(0.0f, 0.0f);
-
-                // Bottom-right corner for texture and quad
-                rlTexCoord2f(0.0f, 0.0f);
-                rlVertex2f(0.0f, (float)stereoFbo.texture.height);
-
-                // Top-right corner for texture and quad
-                rlTexCoord2f(1.0f, 0.0f);
-                rlVertex2f( (float)stereoFbo.texture.width, (float)stereoFbo.texture.height);
-
-                // Top-left corner for texture and quad
-                rlTexCoord2f(1.0f, 1.0f);
-                rlVertex2f( (float)stereoFbo.texture.width, 0.0f);
-            rlEnd();
-        rlPopMatrix();
-
-        rlDisableTexture();
-
-        // Update and draw render texture fbo with distortion to backbuffer
-        UpdateBuffersDefault();
-        DrawBuffersDefault();
-
-        // Restore defaultShader
-        currentShader = defaultShader;
-
-        // Reset viewport and default projection-modelview matrices
-        rlViewport(0, 0, framebufferWidth, framebufferHeight);
-        projection = MatrixOrtho(0.0, framebufferWidth, framebufferHeight, 0.0, 0.0, 1.0);
-        modelview = MatrixIdentity();
-
-        rlDisableDepthTest();
-    }
-#endif
-}
-#endif          // SUPPORT_VR_SIMULATOR
-
 //----------------------------------------------------------------------------------
 // Module specific Functions Definition
 //----------------------------------------------------------------------------------
@@ -4187,15 +3921,9 @@ static void DrawBuffersDefault(void)
     Matrix matModelView = modelview;
 
     int eyesCount = 1;
-#if defined(SUPPORT_VR_SIMULATOR)
-    if (vrStereoRender) eyesCount = 2;
-#endif
 
     for (int eye = 0; eye < eyesCount; eye++)
     {
-#if defined(SUPPORT_VR_SIMULATOR)
-        if (eyesCount == 2) SetStereoView(eye, matProjection, matModelView);
-#endif
 
         // Draw buffers
         if (vertexData[currentBuffer].vCounter > 0)
@@ -4447,27 +4175,6 @@ static void GenDrawCube(void)
     glDeleteBuffers(1, &cubeVBO);
     glDeleteVertexArrays(1, &cubeVAO);
 }
-
-#if defined(SUPPORT_VR_SIMULATOR)
-// Set internal projection and modelview matrix depending on eyes tracking data
-static void SetStereoView(int eye, Matrix matProjection, Matrix matModelView)
-{
-    Matrix eyeProjection = matProjection;
-    Matrix eyeModelView = matModelView;
-
-    // Setup viewport and projection/modelview matrices using tracking data
-    rlViewport(eye*framebufferWidth/2, 0, framebufferWidth/2, framebufferHeight);
-
-    // Apply view offset to modelview matrix
-    eyeModelView = MatrixMultiply(matModelView, vrConfig.eyesViewOffset[eye]);
-
-    // Set current eye projection matrix
-    eyeProjection = vrConfig.eyesProjection[eye];
-
-    SetMatrixModelview(eyeModelView);
-    SetMatrixProjection(eyeProjection);
-}
-#endif  // SUPPORT_VR_SIMULATOR
 
 #endif  // GRAPHICS_API_OPENGL_33 || GRAPHICS_API_OPENGL_ES2
 
