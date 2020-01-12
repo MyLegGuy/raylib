@@ -32,10 +32,7 @@
 
 #include "rayn.h"                     // WARNING: Required for: LogType enum
 
-// Check if config flags have been externally provided on compilation line
-#if !defined(EXTERNAL_CONFIG_FLAGS)
-    #include "config.h"                 // Defines module configuration flags
-#endif
+#include "config.h"                 // Defines module configuration flags
 
 #include "utils.h"
 
@@ -48,9 +45,7 @@
 #include <stdlib.h>                     // Required for: exit()
 #include <stdio.h>                      // Required for: printf(), sprintf()
 #include <stdarg.h>                     // Required for: va_list, va_start(), vfprintf(), va_end()
-#include <string.h>                     // Required for: strcpy(), strcat()
-
-#define MAX_TRACELOG_BUFFER_SIZE   128  // Max length of one trace-log message
+#include <string.h>                     // Required for: strcpy(), strcat)(
 
 //----------------------------------------------------------------------------------
 // Global Variables Definition
@@ -130,22 +125,18 @@ void TraceLog(int logType, const char *text, ...)
         default: break;
     }
 #else
-    char buffer[MAX_TRACELOG_BUFFER_SIZE] = { 0 };
-
     switch (logType)
     {
-        case LOG_TRACE: strcpy(buffer, "TRACE: "); break;
-        case LOG_DEBUG: strcpy(buffer, "DEBUG: "); break;
-        case LOG_INFO: strcpy(buffer, "INFO: "); break;
-        case LOG_WARNING: strcpy(buffer, "WARNING: "); break;
-        case LOG_ERROR: strcpy(buffer, "ERROR: "); break;
-        case LOG_FATAL: strcpy(buffer, "FATAL: "); break;
+        case LOG_TRACE: 	fputs("TRACE: ",stdout); break;
+        case LOG_DEBUG: 	fputs("DEBUG: ",stdout); break;
+        case LOG_INFO: 		fputs("INFO: ",stdout); break;
+        case LOG_WARNING: 	fputs("WARNING: ",stdout); break;
+        case LOG_ERROR: 	fputs("ERROR: ",stdout); break;
+        case LOG_FATAL: 	fputs("FATAL: ",stdout); break;
         default: break;
     }
-
-    strcat(buffer, text);
-    strcat(buffer, "\n");
-    vprintf(buffer, args);
+    vprintf(text, args);
+	fputc('\n',stdout);
 #endif
 
     va_end(args);
