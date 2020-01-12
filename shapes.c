@@ -35,25 +35,12 @@
 
 #include "rayn.h"     // Declares module functions
 
-// Check if config flags have been externally provided on compilation line
-#if !defined(EXTERNAL_CONFIG_FLAGS)
-    #include "config.h"         // Defines module configuration flags
-#endif
+#include "config.h"         // Defines module configuration flags
 
 #include "rlgl.h"       // raylib OpenGL abstraction layer to OpenGL 1.1, 2.1, 3.3+ or ES2
 
 #include <stdlib.h>     // Required for: abs(), fabs()
 #include <math.h>       // Required for: sinf(), cosf(), sqrtf()
-
-//----------------------------------------------------------------------------------
-// Defines and Macros
-//----------------------------------------------------------------------------------
-// Nop...
-
-//----------------------------------------------------------------------------------
-// Types and Structures Definition
-//----------------------------------------------------------------------------------
-// Not here...
 
 //----------------------------------------------------------------------------------
 // Global Variables Definition
@@ -81,16 +68,6 @@ void DrawPixel(int posX, int posY, Color color)
     rlEnd();
 }
 
-// Draw a pixel (Vector version)
-void DrawPixelV(Vector2 position, Color color)
-{
-    rlBegin(RL_LINES);
-        rlColor4ub(color.r, color.g, color.b, color.a);
-        rlVertex2f(position.x, position.y);
-        rlVertex2f(position.x + 1.0f, position.y + 1.0f);
-    rlEnd();
-}
-
 // Draw a line
 void DrawLine(int startPosX, int startPosY, int endPosX, int endPosY, Color color)
 {
@@ -98,16 +75,6 @@ void DrawLine(int startPosX, int startPosY, int endPosX, int endPosY, Color colo
         rlColor4ub(color.r, color.g, color.b, color.a);
         rlVertex2i(startPosX, startPosY);
         rlVertex2i(endPosX, endPosY);
-    rlEnd();
-}
-
-// Draw a line  (Vector version)
-void DrawLineV(Vector2 startPos, Vector2 endPos, Color color)
-{
-    rlBegin(RL_LINES);
-        rlColor4ub(color.r, color.g, color.b, color.a);
-        rlVertex2f(startPos.x, startPos.y);
-        rlVertex2f(endPos.x, endPos.y);
     rlEnd();
 }
 
@@ -1351,159 +1318,6 @@ void SetShapesTexture(Texture2D texture, Rectangle source)
 {
     texShapes = texture;
     recTexShapes = source;
-}
-
-//----------------------------------------------------------------------------------
-// Module Functions Definition - Collision Detection functions
-//----------------------------------------------------------------------------------
-
-// Check if point is inside rectangle
-bool CheckCollisionPointRec(Vector2 point, Rectangle rec)
-{
-    bool collision = false;
-
-    if ((point.x >= rec.x) && (point.x <= (rec.x + rec.width)) && (point.y >= rec.y) && (point.y <= (rec.y + rec.height))) collision = true;
-
-    return collision;
-}
-
-// Check if point is inside circle
-bool CheckCollisionPointCircle(Vector2 point, Vector2 center, float radius)
-{
-    return CheckCollisionCircles(point, 0, center, radius);
-}
-
-// Check if point is inside a triangle defined by three points (p1, p2, p3)
-bool CheckCollisionPointTriangle(Vector2 point, Vector2 p1, Vector2 p2, Vector2 p3)
-{
-    bool collision = false;
-
-    float alpha = ((p2.y - p3.y)*(point.x - p3.x) + (p3.x - p2.x)*(point.y - p3.y)) /
-                  ((p2.y - p3.y)*(p1.x - p3.x) + (p3.x - p2.x)*(p1.y - p3.y));
-
-    float beta = ((p3.y - p1.y)*(point.x - p3.x) + (p1.x - p3.x)*(point.y - p3.y)) /
-                 ((p2.y - p3.y)*(p1.x - p3.x) + (p3.x - p2.x)*(p1.y - p3.y));
-
-    float gamma = 1.0f - alpha - beta;
-
-    if ((alpha > 0) && (beta > 0) & (gamma > 0)) collision = true;
-
-    return collision;
-}
-
-// Check collision between two rectangles
-bool CheckCollisionRecs(Rectangle rec1, Rectangle rec2)
-{
-    bool collision = false;
-
-    if ((rec1.x < (rec2.x + rec2.width) && (rec1.x + rec1.width) > rec2.x) &&
-        (rec1.y < (rec2.y + rec2.height) && (rec1.y + rec1.height) > rec2.y)) collision = true;
-
-    return collision;
-}
-
-// Check collision between two circles
-bool CheckCollisionCircles(Vector2 center1, float radius1, Vector2 center2, float radius2)
-{
-    bool collision = false;
-
-    float dx = center2.x - center1.x;      // X distance between centers
-    float dy = center2.y - center1.y;      // Y distance between centers
-
-    float distance = sqrtf(dx*dx + dy*dy); // Distance between centers
-
-    if (distance <= (radius1 + radius2)) collision = true;
-
-    return collision;
-}
-
-// Check collision between circle and rectangle
-// NOTE: Reviewed version to take into account corner limit case
-bool CheckCollisionCircleRec(Vector2 center, float radius, Rectangle rec)
-{
-    int recCenterX = (int)(rec.x + rec.width/2.0f);
-    int recCenterY = (int)(rec.y + rec.height/2.0f);
-
-    float dx = (float)fabs(center.x - recCenterX);
-    float dy = (float)fabs(center.y - recCenterY);
-
-    if (dx > (rec.width/2.0f + radius)) { return false; }
-    if (dy > (rec.height/2.0f + radius)) { return false; }
-
-    if (dx <= (rec.width/2.0f)) { return true; }
-    if (dy <= (rec.height/2.0f)) { return true; }
-
-    float cornerDistanceSq = (dx - rec.width/2.0f)*(dx - rec.width/2.0f) +
-                             (dy - rec.height/2.0f)*(dy - rec.height/2.0f);
-
-    return (cornerDistanceSq <= (radius*radius));
-}
-
-// Get collision rectangle for two rectangles collision
-Rectangle GetCollisionRec(Rectangle rec1, Rectangle rec2)
-{
-    Rectangle retRec = { 0, 0, 0, 0 };
-
-    if (CheckCollisionRecs(rec1, rec2))
-    {
-        float dxx = (float)fabs(rec1.x - rec2.x);
-        float dyy = (float)fabs(rec1.y - rec2.y);
-
-        if (rec1.x <= rec2.x)
-        {
-            if (rec1.y <= rec2.y)
-            {
-                retRec.x = rec2.x;
-                retRec.y = rec2.y;
-                retRec.width = rec1.width - dxx;
-                retRec.height = rec1.height - dyy;
-            }
-            else
-            {
-                retRec.x = rec2.x;
-                retRec.y = rec1.y;
-                retRec.width = rec1.width - dxx;
-                retRec.height = rec2.height - dyy;
-            }
-        }
-        else
-        {
-            if (rec1.y <= rec2.y)
-            {
-                retRec.x = rec1.x;
-                retRec.y = rec2.y;
-                retRec.width = rec2.width - dxx;
-                retRec.height = rec1.height - dyy;
-            }
-            else
-            {
-                retRec.x = rec1.x;
-                retRec.y = rec1.y;
-                retRec.width = rec2.width - dxx;
-                retRec.height = rec2.height - dyy;
-            }
-        }
-
-        if (rec1.width > rec2.width)
-        {
-            if (retRec.width >= rec2.width) retRec.width = rec2.width;
-        }
-        else
-        {
-            if (retRec.width >= rec1.width) retRec.width = rec1.width;
-        }
-
-        if (rec1.height > rec2.height)
-        {
-            if (retRec.height >= rec2.height) retRec.height = rec2.height;
-        }
-        else
-        {
-           if (retRec.height >= rec1.height) retRec.height = rec1.height;
-        }
-    }
-
-    return retRec;
 }
 
 //----------------------------------------------------------------------------------
